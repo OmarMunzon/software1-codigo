@@ -173,8 +173,7 @@ document.getElementById('joinForm').addEventListener('submit', function(event) {
         method: 'POST',
         body: formData,
         headers: {
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-            //'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content            
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')        
         }
     })
     .then(response => {

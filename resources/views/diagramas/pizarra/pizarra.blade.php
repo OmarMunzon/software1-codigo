@@ -154,7 +154,7 @@
                                     @csrf
                                     <div>
                                         <label for="miTexto" class="block text-sm font-medium text-gray-700">Texto</label>
-                                        <textarea id="miTexto" name="miTexto" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" rows="4" required></textarea>
+                                        <textarea id="miTexto" name="miTexto" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" rows="4" placeholder="NombreClase[attr1,attr2,...], ..." required></textarea>
                                     </div>                                                                    
                                     <button type="submit" id="" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Generar</button>    
                                 </form>
@@ -217,11 +217,25 @@
                             <form id="propertiesForm" class="space-y-4">
                                 <div>
                                     <label for="className" class="block text-sm font-medium text-gray-700">Nombre de la Clase</label>
-                                    <input type="text" id="className" name="className" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                                    <input 
+                                        type="text" 
+                                        id="className" 
+                                        name="className" 
+                                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm" 
+                                        oninput="this.value = this.value.toLowerCase()"
+                                        onkeydown="if(event.key === 'Enter') event.preventDefault();">
                                 </div>
                                 <div>
                                     <label for="classAttributes" class="block text-sm font-medium text-gray-700">Atributos</label>
-                                    <textarea id="classAttributes" name="classAttributes" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" rows="4"></textarea>
+                                    <textarea 
+                                        id="classAttributes" 
+                                        name="classAttributes" 
+                                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm" 
+                                        rows="4"                                 
+                                        oninput="this.value = this.value.toLowerCase(); validateAttributes(this);" 
+                                    ></textarea>
+                                    <p id="attributesFeedback" class="text-sm text-red-600 hidden">Cada línea debe seguir el formato: nombre: tipo (ej. edad: int)</p>
+
                                 </div>
                                                                 
                                 <button type="button" id="savePropertiesBtn" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Guardar</button>
@@ -339,7 +353,7 @@
             graph.addCells([link1, link2]);  
         }else{
             let labels = [];
-            if (data.type !== 'Inheritance') {
+            if (data.type !== 'uml.Generalization') {
                     let mult = separarMultiplicidad(data.multiplicity.multiplicity);
                     // Etiqueta en el origen
                     labels.push({ position: 0, attrs: { text: { text: mult['source'] } } });
@@ -347,6 +361,54 @@
                     labels.push({ position: 1, attrs: { text: { text: mult['target'] } } });        
             }
 
+            let link;
+            switch (data.type) {
+                case 'uml.Association':
+                    link = new joint.shapes.uml.Association({
+                        source: { id: data.source.id },
+                        target: { id: data.target.id },
+                        labels: data.labels
+                    });
+                    break;
+                case 'uml.Aggregation':
+                    link = new joint.shapes.uml.Aggregation({
+                        source: { id: data.source.id },
+                        target: { id: data.target.id },           
+                    });                    
+                    break;
+                case 'uml.Composition':
+                    link = new joint.shapes.uml.Composition({
+                        source: { id: data.source.id },
+                        target: { id: data.target.id },
+                    });
+                    break;
+                case 'uml.Generalization':
+                    link = new joint.shapes.uml.Generalization({
+                        source: { id: data.source.id },
+                        target: { id: data.target.id },
+                    });                    
+                    break;
+            }
+            if (link) graph.addCell(link);
+        }                                  
+    }).listen('ColaboracionGuardarCambios', (e) => {
+        const data = JSON.parse(e.data);             
+        console.log('Dato de Clase Recibido', data);
+        const clase = graph.getCell(data.id);  
+        if(clase){
+            clase.set('name', data.name);
+            clase.set('attributes', data.attributes);   
+            updateClassSelectors()         
+        }else{
+            console.log('ID de componente no encontrado');     
+        }
+    }).listen('ColaboracionClasesBorradas',(e)=>{                
+        graph.clear();
+        updateClassSelectors();
+    }).listen('ColaboracionRelacionImagen',(e)=>{
+            const data = JSON.parse(e.data);
+            console.log("dato Recibido: ",data)
+            let labels = [];        
             let link;
             switch (data.type) {
                 case 'uml.Association':
@@ -376,21 +438,6 @@
                     break;
             }
             if (link) graph.addCell(link);
-        }                                  
-    }).listen('ColaboracionGuardarCambios', (e) => {
-        const data = JSON.parse(e.data);             
-        console.log('Dato de Clase Recibido', data);
-        const clase = graph.getCell(data.id);  
-        if(clase){
-            clase.set('name', data.name);
-            clase.set('attributes', data.attributes);   
-            updateClassSelectors()         
-        }else{
-            console.log('ID de componente no encontrado');     
-        }
-    }).listen('ColaboracionClasesBorradas',(e)=>{                
-        graph.clear();
-        updateClassSelectors();
     });
 
 
@@ -477,39 +524,41 @@
                     // Etiqueta en el origen
                     labels.push({ position: 0, attrs: { text: { text: mult['source'] } } });
                     // Etiqueta en el destino
-                    labels.push({ position: 1, attrs: { text: { text: mult['target'] } } });        
-            }
-
+                    labels.push({ position: 1, attrs: { text: { text: mult['target'] } } });  
+            }      
+            
             let link;
             switch (type) {
                 case 'association':
-                link = new joint.shapes.uml.Association({
-                    source: { id: source.id },
-                    target: { id: target.id },
-                    labels: labels
-                });
-                break;
+                    link = new joint.shapes.uml.Association({
+                        source: { id: source.id },
+                        target: { id: target.id },
+                        labels: labels
+                    });
+                    link.set('multiplicity',{multiplicity: multiplicity});
+                    break;
                 case 'aggregation':
-                link = new joint.shapes.uml.Aggregation({
-                    source: { id: source.id },
-                    target: { id: target.id },            
-                });
-                break;
+                    link = new joint.shapes.uml.Aggregation({                    
+                        source: { id: source.id },
+                        target: { id: target.id },                    
+                    });
+                    link.set('multiplicity',{multiplicity: '1..*'});
+                    break;
                 case 'composition':
-                link = new joint.shapes.uml.Composition({
-                    source: { id: source.id },
-                    target: { id: target.id },            
-                });
-                break;
+                    link = new joint.shapes.uml.Composition({                               
+                        source: { id: source.id },
+                        target: { id: target.id },            
+                    });
+                    link.set('multiplicity',{multiplicity: '1..*'});
+                    break;
                 case 'inheritance':
-                link = new joint.shapes.uml.Generalization({
-                    source: { id: source.id },
-                    target: { id: target.id }
-                });
-                break;
+                    link = new joint.shapes.uml.Generalization({
+                        source: { id: source.id },
+                        target: { id: target.id },
+                    });                            
+                    break;
             }
 
-            link.set('multiplicity',{multiplicity: multiplicity});
             if (link) graph.addCell(link);
             enviarColaboracion('/colaboracion-add-relacion',link);
         }        
@@ -577,6 +626,7 @@
         enviarColaboracion('/colaboracion-clases-borradas',{});
     });
 
+
     // cargar Imagen
     document.getElementById('cargarImgBtn').addEventListener('click', () => {
         document.getElementById('abrirArchivo').click();
@@ -597,37 +647,57 @@
         }
     });
 
-    //prompt
+    //texto
     document.getElementById('textForm').addEventListener('submit', function(event) {
-        event.preventDefault(); // Evitar el envío del formulario por defecto
+        event.preventDefault();
 
         const prompt = document.getElementById('miTexto').value.trim();
         if (prompt === '') {
             alert('Por favor, ingresa un prompt válido.');
             return;
         }
+
+        // Mostrar indicador de carga
+        const loadingIndicator = document.createElement('div');
+        loadingIndicator.textContent = 'Cargando...';
+        document.body.appendChild(loadingIndicator);
+
         document.getElementById('miTexto').value = ''; // Limpiar el textarea
 
-        // Enviar el prompt al servidor
         fetch('/addTexto', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
-            body: JSON.stringify(prompt)
+            body: JSON.stringify(prompt) // Enviar como objeto
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`Error HTTP: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
+            if (!data.respuesta) {
+                alert('No se recibió una respuesta válida del servidor.');
+                return;
+            }
             console.log('Respuesta del servidor:', data.respuesta);
             crearDiseño(data.respuesta);          
         })
         .catch(error => {
-            console.error('Error al enviar el prompt:', error);           
+            console.error('Error al enviar el prompt:', error);
+            alert('Ocurrió un error al procesar tu solicitud. Por favor, intenta de nuevo.');
+        })
+        .finally(() => {
+            // Ocultar indicador de carga
+            document.body.removeChild(loadingIndicator);
         });
     });
 
     //funciones
+
     function updateClassSelectors() {
         var classes = graph.getElements();
         const sourceSelect = document.getElementById('sourceClass');
@@ -650,7 +720,6 @@
 
     function separarMultiplicidad( multiplicity ) {
         const parts = multiplicity.split('..');
-        // Ejemplo de multiplicidad: "1..*", "*..*"
         if (parts.length === 2) {
             switch(multiplicity){
               case '1..1':                
@@ -666,8 +735,7 @@
                 parts[1] = '1..*'; 
             }
             return { source: parts[0], target: parts[1] };
-        }
-        //return { source: '1', target: '1' }; // Valor por defecto        
+        }        
         return null;
     }
 
@@ -678,8 +746,6 @@
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
-            //body: JSON.stringify({ element: element.toJSON() })
-            //body: JSON.stringify(clase.toJSON()) estaba usando antes del borrar clases
             body: JSON.stringify(clase)
         })
         .then(response => response.json())
@@ -691,10 +757,14 @@
         });
     };
 
-    //enviar boceto al servidor
+    //enviar imagen 
     function enviarImagen(route,file){
+        const cargarImgBtn = document.getElementById('cargarImgBtn');
+        cargarImgBtn.disabled = true;
+        cargarImgBtn.textContent = 'Cargando...';
+
         const formData = new FormData();
-        formData.append('image', file);   
+        formData.append('image', file);    
         fetch(route, {    
             method: 'POST',
             headers: {  
@@ -708,7 +778,11 @@
             crearDiseño(data.respuesta);
         })
         .catch(error => {             
-            console.error('Error processing image:', error);            
+            console.error('Error processing image:', error);    
+            alert('Error al cargar la imagen');        
+        }).finally(() => {
+            cargarImgBtn.disabled = false;
+            cargarImgBtn.textContent = 'Importar Imagen';            
         });
     }
 
@@ -730,7 +804,8 @@
                         '.uml-class-name-text': { fill: '#000' }
                     }
                 });
-                graph.addCell(clase);                
+                graph.addCell(clase);     
+                enviarColaboracion('/colaboracion-add-clase',clase);
                 console.log('Clase añadida:', clase.get('name'));
                 updateClassSelectors();                
             }
@@ -769,8 +844,28 @@
                         break;
                 }
                 if (link) graph.addCell(link);
+                enviarColaboracion('/colaboracion-relacion-imagen',link);
             }               
         });
+    }
+
+    function validateAttributes(textarea) {
+        const feedback = document.getElementById('attributesFeedback');
+        const lines = textarea.value.split('\n').filter(line => line.trim() !== '');
+        const validTypes = ['int', 'string', 'float', 'boolean', 'double'];
+        const attributePattern = /^[a-z0-9_]+:[\s]*[a-z]+$/;
+
+        let allValid = true;
+        for (const line of lines) {
+            if (!attributePattern.test(line) || !validTypes.includes(line.split(':')[1].trim())) {
+                allValid = false;
+                break;
+            }
+        }
+
+        feedback.classList.toggle('hidden', allValid);
+        textarea.classList.toggle('border-red-500', !allValid);
+        textarea.classList.toggle('border-gray-300', allValid);
     }
 
 </script>

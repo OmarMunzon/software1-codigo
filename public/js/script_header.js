@@ -1,4 +1,4 @@
-// Funciones de utilidad
+// Funciones
 
     function savePizarra() {
         const json = JSON.stringify(graph.toJSON(), null, 2);
@@ -9,53 +9,10 @@
         const fileName = `graph_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         a.download = fileName;
         a.click();
-        URL.revokeObjectURL(url);            
-        
-        // fetch('/pizarra-guardar', {
-        //     method: 'POST',
-        //     headers: {     
-        //         'Content-Type': 'application/json',           
-        //         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content            
-        //     },        
-        //     body: JSON.stringify( {nameFile:fileName} )
-        // })
-        // .then(response => response.json())
-        // .then(data => {
-        //     if (data.status) {
-        //         console.log('Datos guardados en la base de datos con éxito.');                 
-        //     } else {
-        //         console.log('Error al guardar los datos: ');
-        //     }
-        // })
-        // .catch(error => {
-        //     console.error('Error:', error);          
-        // });        
+        URL.revokeObjectURL(url);                    
     }
     
-    // function exportPizarra() {        
-    //     //const json = JSON.stringify(graph.toJSON(), null, 2);        
-    //      const json = graph.toJSON();
-    //     console.log('backend ',json)
-        
-    //     fetch('/generar-backend', {
-    //         method: 'POST',
-    //         headers: {     
-    //             'Content-Type': 'application/json',           
-    //             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content            
-    //         },        
-    //         body: JSON.stringify(json)
-    //     })
-    //     .then(response => response.json())
-    //     .then(data => {
-    //         console.log('Datos respuesta: ',data);
-    //     })
-    //     .catch(error => {
-    //         console.error('Error:', error);          
-    //     });        
-    // }
-
-    // Funcionalidad de guardar
-    
+    //guardar
     function exportPizarra(){        
         // Obtener datos de la pizarra
         const json = JSON.stringify(graph.toJSON());

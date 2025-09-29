@@ -7,6 +7,7 @@ use App\Events\ColaboracionAddRelacion;
 use App\Events\ColaboracionClaseMovido;
 use App\Events\ColaboracionClasesBorradas;
 use App\Events\ColaboracionGuardarCambios;
+use App\Events\ColaboracionRelacionImagen;
 use App\Models\Pizarra;
 use App\Models\Reunion;
 use Carbon\Carbon;
@@ -97,6 +98,14 @@ class PizarraController extends Controller
         $data = $request->all();
         $data = json_encode($data);  
         broadcast(new ColaboracionClasesBorradas($data))->toOthers();
+        return response()->json(['status' => 'success']);
+    }
+
+    public function colaboracionRelacionImagen(Request $request)
+    {
+        $data = $request->all();
+        $data = json_encode($data);  
+        broadcast(new ColaboracionRelacionImagen($data))->toOthers();
         return response()->json(['status' => 'success']);
     }
 
@@ -206,7 +215,17 @@ class PizarraController extends Controller
                 [
                     'parts' => [                                                
                         [
-                            'text' => 'El diagrama de clases: '.$texto .'Generar un json con el formato de JointJS para un diagrama de clases (type,uml.Class,name,attributes),las relaciones usan (uml.Association,uml.Aggregation,uml.Composition,uml.Generalization,source,target) para la multiplicidad usar (labels,1,*) y ambos deben tener un campo "id" con un UUID v4 único alfanumérico.'                            
+                            'text' => 'En base a este texto:'. $texto . 
+                                        'Generar un JSON con el formato de JointJS para un diagrama de clases.
+                                        El JSON debe contener:
+                                        - un array llamado "cells".
+                                        - "id": UUID v4 único alfanumérico.
+                                        - "type": "uml.Class".
+                                        - "name": nombre de la clase.
+                                        - "attributes": lista de atributos con sus tipos [name:type].
+                                        - "position": { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 }.
+                                        - "size": {width: 150, height: 100}.
+                                        '
                         ],                        
                     ]
                 ]
@@ -265,10 +284,10 @@ class PizarraController extends Controller
      */
     public function generarBackend(Request $request)
     {
-        //$data = $request->all();
         $graphData = $request->input('graph_data'); // JSON recibido
         $data = json_decode($graphData,true);  
-        //dd(gettype($data),$data["cells"]);
+        //dd($data["cells"]);
+        
         $resultado= $this->filterUmlData($data);
         //dd($resultado);
         // Directorio temporal para el proyecto
@@ -305,8 +324,7 @@ class PizarraController extends Controller
 
         foreach ($resultado['classes'] as $class) {
             // Crear entidad
-            //$entityContent = $this->getEntityContent($class,$resultado['relationships']);
-            $entityContent = $this->getEntityContent($class);
+            $entityContent = $this->getEntityContent($class,$resultado['relationships']);            
             File::put($tempDir . '/src/main/java/com/example/demo/model/'.(ucfirst($class['name'])).'.java', $entityContent);
 
             // Crear repositorio
@@ -318,7 +336,7 @@ class PizarraController extends Controller
             File::put($tempDir . '/src/main/java/com/example/demo/service/'.(ucfirst($class['name'])).'Service.java', $serviceContent);
 
             // Crear controlador REST
-            $controllerContent = $this->getControllerContent($class);
+            $controllerContent = $this->getControllerContent($class,$resultado['relationships']);
             File::put($tempDir . '/src/main/java/com/example/demo/controller/'.ucfirst($class['name']).'Controller.java', $controllerContent);
         }
 
@@ -421,94 +439,189 @@ class PizarraController extends Controller
         }';
     }
 
-    private function getEntityContent($class)
+    private function getEntityContent($class, $relationships)
     {
+        $classId = $class['id'];
         $className = $class['name'];
         $attributes = $class['attributes'];
-               
-        $nuevaClase = 'package com.example.demo.model;
-        
-        import jakarta.persistence.*;
-        import java.util.List;
+        $esPadre = false;
+        $esHijo = false;
+        $nombrePadre = null;
 
-        @Entity
-        public class '.ucfirst($className).' {
-            @Id
-            @GeneratedValue(strategy = GenerationType.IDENTITY)';
+        // ANALIZAR LAS RELACIONES PARA DETERMINAR EL TIPO DE CLASE
+        foreach ($relationships as $rel) {
+            if ($rel['type'] === 'uml.Generalization') {                
+                if ($rel['target'] === $classId) {
+                    $esPadre = true;                    
+                }
+            
+                if ($rel['source'] === $classId) {
+                    $esHijo = true;                    
+                }
+                $nombrePadre = $rel['targetName'];
+            }
+        }
+
+        // CONSTRUIR LA PLANTILLA DE LA CLASE
+        $nuevaClase = '
+            package com.example.demo.model;
+
+            import jakarta.persistence.*;
+            import java.util.List;';
         $nuevaClase .= "\n";
+
+        if($esPadre){
+            $nuevaClase .= '
+                @Entity
+                @Inheritance(strategy = InheritanceType.JOINED)
+                public abstract class '.ucfirst($nombrePadre).' {
+                    @Id
+                    @GeneratedValue(strategy = GenerationType.IDENTITY)';
+            
+        }elseif($esHijo){            
+            $nuevaClase .= '                        
+                @Entity
+                public class '.ucfirst($className).' extends '.ucfirst($nombrePadre).' {';
+            
+        }else{
+            $nuevaClase .= '
+                @Entity
+                public class '.ucfirst($className).' {
+                    @Id
+                    @GeneratedValue(strategy = GenerationType.IDENTITY)';
+        }
+            
+        $nuevaClase .= "\n";
+
+        // -------------------------------
+        // 1. Atributos simples
+        // -------------------------------
+        foreach ($attributes as $attr) {
+            list($name, $type) = explode(":", $attr);
+            $name = trim($name);
+            switch (trim($type)) {
+                case "int": $javaType = "int"; break;
+                case "string": $javaType = "String"; break;
+                case "float": $javaType = "float"; break;
+                case "double": $javaType = "double"; break;
+                case "boolean": $javaType = "boolean"; break;
+                default: $javaType = "String";
+            }
+            $nuevaClase .= "    private $javaType $name;\n";
+        }
+        $nuevaClase .= "\n"; 
+        // -------------------------------
+        // 2. Relaciones
+        // -------------------------------
+        foreach ($relationships as $rel) {
+            $source = $rel['source'];
+            $target = $rel['target'];
+            $multiplicity = $rel['multiplicity'];
+            $sourceName = ($rel['sourceName']);
+            $targetName = ($rel['targetName']);
+
+            // Si la clase actual es la fuente
+            if ($class['id'] == $source && $rel['type'] === "uml.Association"  ) {//|| $class['id'] == $source && $rel['type'] === "uml.Aggregation" || $class['id'] == $source && $rel['type'] === "uml.Composition"
+                if ($multiplicity == "1..*") {
+                    $nuevaClase .= "    @OneToMany(mappedBy = \"".lcfirst($sourceName)."\")\n";
+                    $nuevaClase .= "    private List<".ucfirst($targetName)."> ".lcfirst($targetName)."s;\n\n";
+                } elseif ($multiplicity == "1..1") {
+                    $nuevaClase .= "    @OneToOne\n";
+                    $nuevaClase .= "    private ".ucfirst($targetName)." ".lcfirst($targetName).";\n\n";
+                } elseif ($multiplicity == "*..*") {
+                    $nuevaClase .= "    @ManyToMany\n";
+                    $nuevaClase .= "    private List<".ucfirst($className)."> ".lcfirst($className)."s;\n\n";
+                }
+            }
+
+            // Si la clase actual es el destino
+            if ($class['id'] == $target && $rel['type'] === "uml.Association" ){// || $class['id'] == $target && $rel['type'] === "uml.Aggregation" || $class['id'] == $target && $rel['type'] === "uml.Composition" ) {
+                if ($multiplicity == "1..*") {
+                    $nuevaClase .= "    @ManyToOne\n";
+                    $nuevaClase .= "    private ".ucfirst($sourceName)." ".lcfirst($sourceName).";\n\n";
+                    
+                    $nuevaClase .= "public ".ucfirst($sourceName)." get".ucfirst($sourceName)."(){
+                        return this.".lcfirst($sourceName).";
+                    }
+    
+                    public void set".ucfirst($sourceName)."(".ucfirst($sourceName)." ".lcfirst($sourceName)."){
+                        this.".lcfirst($sourceName)." = ".lcfirst($sourceName).";
+                    }";
+                    $nuevaClase .= "\n";
+
+                } elseif ($multiplicity == "1..1") {                    
+                    $nuevaClase .= "    @OneToOne\n";
+                    $nuevaClase .= "    private ".ucfirst($sourceName)." ".lcfirst($sourceName).";\n\n";
+                    
+                    $nuevaClase .= "public ".ucfirst($sourceName)." get".ucfirst($sourceName)."(){
+                        return this.".lcfirst($sourceName).";
+                    }
+    
+                    public void set".ucfirst($sourceName)."(".ucfirst($sourceName)." ".lcfirst($sourceName)."){
+                        this.".lcfirst($sourceName)." = ".lcfirst($sourceName).";
+                    }";
+                    $nuevaClase .= "\n"; 
+                }            
+            }
+
+            if($rel['type'] === "uml.Aggregation" || $rel['type'] === "uml.Composition"){                
+                if($multiplicity === "1..*"){
+                    if($class['id'] == $source){
+                        $nuevaClase .= "    @ManyToOne\n";
+                        $nuevaClase .= "    private ".ucfirst($targetName)." ".lcfirst($targetName).";\n\n";
+                        
+                        $nuevaClase .= "public ".ucfirst($targetName)." get".ucfirst($targetName)."(){
+                            return this.".lcfirst($targetName).";
+                        }
         
-            // Procesar cada atributo -> crear atributos privados
-            foreach ($attributes as $attr) {
-                list($name, $type) = explode(":", $attr);
-                $name = trim($name);
-                switch (trim($type)) {
-                    case "int":
-                        $javaType = "int";
-                        break;
-                    case "string":
-                        $javaType = "String";
-                        break;                    
-                    case "float":
-                        $javaType = "float";
-                        break;
-                    case "double":
-                        $javaType = "double";
-                        break;
-                    case "boolean":
-                        $javaType = "boolean";
-                        break;                                        
-                    default:
-                        $javaType = "String";
+                        public void set".ucfirst($targetName)."(".ucfirst($targetName)." ".lcfirst($targetName)."){
+                            this.".lcfirst($targetName)." = ".lcfirst($targetName).";
+                        }";
+                        $nuevaClase .= "\n";
+                    }elseif($class['id'] == $target){
+                        $nuevaClase .= "    @OneToMany(mappedBy = \"".lcfirst($className)."\")\n";
+                        $nuevaClase .= "    private List<".ucfirst($sourceName)."> ".lcfirst($sourceName)."s;\n\n";                    
+                        //$nuevaClase .= "    private List<".ucfirst($targetName)."> ".lcfirst($targetName)."s;\n\n";                    
+                    }
                 }
+            }
+        }
 
-                // Definir atributo privado
-                $nuevaClase .= "    private $javaType $name;\n";
+        $nuevaClase .= "\n";
+
+        // -------------------------------
+        // 3. Getters y Setters
+        // -------------------------------
+        foreach ($attributes as $attr) {
+            list($name, $type) = explode(":", $attr);
+            $name = trim($name);
+            switch (trim($type)) {
+                case "int": $javaType = "int"; break;
+                case "string": $javaType = "String"; break;
+                case "float": $javaType = "float"; break;
+                case "double": $javaType = "double"; break;
+                case "boolean": $javaType = "boolean"; break;
+                default: $javaType = "String";
             }
 
-            $nuevaClase .= "\n";
+            $methodName = ucfirst($name);
 
-            // Procesar cada atributo -> crear getters y setters
-            foreach ($attributes as $attr) {
-                list($name, $type) = explode(":", $attr);
-                $name = trim($name);
-                
-                switch (trim($type)) {
-                    case "int":
-                        $javaType = "int";
-                        break;
-                    case "string":
-                        $javaType = "String";
-                        break;                    
-                    case "float":
-                        $javaType = "float";
-                        break;
-                    case "double":
-                        $javaType = "double";
-                        break;
-                    case "boolean":
-                        $javaType = "boolean";
-                        break;                                        
-                    default:
-                        $javaType = "String";
-                }
+            // Getter
+            $nuevaClase .= "    public $javaType get$methodName() {\n";
+            $nuevaClase .= "        return $name;\n";
+            $nuevaClase .= "    }\n\n";
 
-                // Nombre del método con la primera letra en mayúscula
-                $methodName = ucfirst($name);
+            // Setter
+            $nuevaClase .= "    public void set$methodName($javaType $name) {\n";
+            $nuevaClase .= "        this.$name = $name;\n";
+            $nuevaClase .= "    }\n\n";
+        }
 
-                 // Getter
-                $nuevaClase .= "    public $javaType get$methodName() {\n";
-                $nuevaClase .= "        return $name;\n";
-                $nuevaClase .= "    }\n\n";
-
-                // Setter
-                $nuevaClase .= "    public void set$methodName($javaType $name) {\n";
-                $nuevaClase .= "        this.$name = $name;\n";
-                $nuevaClase .= "    }\n\n";
-            }
-        $nuevaClase .='}';
+        $nuevaClase .= '}';
 
         return $nuevaClase;
     }
+
 
     private function getRepositoryContent($class)
     {
@@ -561,64 +674,145 @@ class PizarraController extends Controller
         return $newService;
     }
 
-    private function getControllerContent($class)
+    private function getControllerContent($class,$relationships)
     {
         $className = $class['name'];
-
-        return 'package com.example.demo.controller;
         
-        import org.springframework.web.bind.annotation.*;
-        import com.example.demo.service.'.ucfirst($className).'Service;
-        import com.example.demo.model.'.ucfirst($className).';
-        import org.springframework.http.ResponseEntity;
-        import java.util.List;
+        if($this->isClaseHerencia($class,$relationships)){
+            $nuevoController = 'package com.example.demo.controller;
+    
+            import org.springframework.web.bind.annotation.*;
+            import com.example.demo.service.'.ucfirst($className).'Service;
+            import com.example.demo.model.*;
+            import org.springframework.http.ResponseEntity;
+            import java.util.List;
 
-        @RestController
-        @RequestMapping("/'.$className.'s")
-        public class '.ucfirst($className).'Controller {
+            @RestController
+            @RequestMapping("/'.lcfirst($className).'s")
+            public class '.ucfirst($className).'Controller {
 
-            private final '.ucfirst($className).'Service service;
+                private final '.ucfirst($className).'Service service;
 
-            public '.ucfirst($className).'Controller('.ucfirst($className).'Service service) {
-                this.service = service;
-            }
-
-            @GetMapping
-            public List<'.ucfirst($className).'> getAll() {
-                return service.getAll();
-            }
-
-            @GetMapping("/{id}")
-            public ResponseEntity<'.ucfirst($className).'> getById(@PathVariable Integer id) {
-                return service.getById(id)
-                        .map(ResponseEntity::ok)
-                        .orElse(ResponseEntity.notFound().build());
-            }
-
-            @PostMapping
-            public '.ucfirst($className).' create(@RequestBody '.ucfirst($className).' '.$className.') {                
-                return service.save('.$className.');
-            }
-
-            @PutMapping("/{id}")
-            public ResponseEntity<'.ucfirst($className).'> update(@PathVariable Integer id, @RequestBody '.ucfirst($className).' '.$className.') {
-                 return service.getById(id)
-                        .map(existing -> {
-                            
-                            return ResponseEntity.ok(service.save(existing));
-                        })
-                        .orElse(ResponseEntity.notFound().build());
-            }
-
-            @DeleteMapping("/{id}")
-            public ResponseEntity<Void> delete(@PathVariable Integer id) {
-                if (service.getById(id).isPresent()) {
-                    service.delete(id);
-                    return ResponseEntity.noContent().build();
+                public '.ucfirst($className).'Controller('.ucfirst($className).'Service service) {
+                    this.service = service;
                 }
-                return ResponseEntity.notFound().build();
+
+                @GetMapping
+                public List<'.ucfirst($className).'> getAll() {
+                    return service.getAll();
+                }
+
+                @GetMapping("/{id}")
+                public ResponseEntity<'.ucfirst($className).'> getById(@PathVariable Integer id) {
+                    return service.getById(id)
+                            .map(ResponseEntity::ok)
+                            .orElse(ResponseEntity.notFound().build());
+                }
+
+                @PostMapping
+                public '.ucfirst($className).' create(@RequestBody '.ucfirst($className).' '.$className.') {                
+                    return service.save('.$className.');
+                }
+
+                @PutMapping("/{id}")
+                public ResponseEntity<'.ucfirst($className).'> update(@PathVariable Integer id, @RequestBody '.ucfirst($className).' '.$className.') {
+                    return service.getById(id)
+                            .map(existing -> {
+                                
+                                return ResponseEntity.ok(service.save(existing));
+                            })
+                            .orElse(ResponseEntity.notFound().build());
+                }
+
+                @DeleteMapping("/{id}")
+                public ResponseEntity<Void> delete(@PathVariable Integer id) {
+                    if (service.getById(id).isPresent()) {
+                        service.delete(id);
+                        return ResponseEntity.noContent().build();
+                    }
+                    return ResponseEntity.notFound().build();
+                }';
+            $nuevoController .= "\n\n";
+
+            $listHerencia = [];
+            foreach ($relationships as $indice => $rel) {
+                if($rel['type'] === 'uml.Generalization'){
+                    //$listHerencia = $this->cargarListaHerencia($relationships);
+                    //if($rel['multiplicity'] !== null){
+                    //}
+                    
+                    if ($indice % 2 === 0) {                        
+                        $hijo = $rel['sourceName'];
+        
+                        $nuevoController .='@PostMapping("/'.$hijo.'")
+                        public '.ucfirst($className).' create'.ucfirst($hijo).'(@RequestBody '.ucfirst($hijo).' '.$hijo.') {
+                            return service.save('.$hijo.');
+                        }';
+                        $nuevoController .= "\n\n";                                            
+                    }
+                    
+                }
             }
-        }';
+            $nuevoController .= '}';
+
+        }else{
+            $nuevoController = 'package com.example.demo.controller;
+    
+            import org.springframework.web.bind.annotation.*;
+            import com.example.demo.service.'.ucfirst($className).'Service;
+            import com.example.demo.model.*;
+            import org.springframework.http.ResponseEntity;
+            import java.util.List;
+
+            @RestController
+            @RequestMapping("/'.lcfirst($className).'s")
+            public class '.ucfirst($className).'Controller {
+
+                private final '.ucfirst($className).'Service service;
+
+                public '.ucfirst($className).'Controller('.ucfirst($className).'Service service) {
+                    this.service = service;
+                }
+
+                @GetMapping
+                public List<'.ucfirst($className).'> getAll() {
+                    return service.getAll();
+                }
+
+                @GetMapping("/{id}")
+                public ResponseEntity<'.ucfirst($className).'> getById(@PathVariable Integer id) {
+                    return service.getById(id)
+                            .map(ResponseEntity::ok)
+                            .orElse(ResponseEntity.notFound().build());
+                }
+
+                @PostMapping
+                public '.ucfirst($className).' create(@RequestBody '.ucfirst($className).' '.$className.') {                
+                    return service.save('.$className.');
+                }
+
+                @PutMapping("/{id}")
+                public ResponseEntity<'.ucfirst($className).'> update(@PathVariable Integer id, @RequestBody '.ucfirst($className).' '.$className.') {
+                    return service.getById(id)
+                            .map(existing -> {
+                                
+                                return ResponseEntity.ok(service.save(existing));
+                            })
+                            .orElse(ResponseEntity.notFound().build());
+                }
+
+                @DeleteMapping("/{id}")
+                public ResponseEntity<Void> delete(@PathVariable Integer id) {
+                    if (service.getById(id).isPresent()) {
+                        service.delete(id);
+                        return ResponseEntity.noContent().build();
+                    }
+                    return ResponseEntity.notFound().build();
+                }
+            }';
+        }
+
+        return $nuevoController;
     }
  
     
@@ -641,7 +835,8 @@ class PizarraController extends Controller
                 $classIdToName[$cell['id']] = $cell['name'];
                 $filteredData['classes'][] = [
                     'name' => $cell['name'],
-                    'attributes' => $cell['attributes'] ?? []
+                    'attributes' => $cell['attributes'] ?? [],
+                    'id' => $cell['id']
                 ];
             }
             // Filtrar relaciones
@@ -650,9 +845,9 @@ class PizarraController extends Controller
                     'type' => $cell['type'],
                     'source' => isset($cell['source']['id']) ? ($cell['source']['id'] ?? 'Unknown') : 'Unknown',
                     'target' => isset($cell['target']['id']) ? ($cell['target']['id'] ?? 'Unknown') : 'Unknown',
-                    // 'source' => isset($cell['source']['id']) ? ($classIdToName[$cell['source']['id']] ?? 'Unknown') : 'Unknown',
-                    // 'target' => isset($cell['target']['id']) ? ($classIdToName[$cell['target']['id']] ?? 'Unknown') : 'Unknown',
                     'multiplicity' => $cell['multiplicity']['multiplicity'] ?? null,
+                    'sourceName' => $this->obtenerNombreId($data, $cell['source']['id']),
+                    'targetName' => $this->obtenerNombreId($data, $cell['target']['id']),
                     'labels' => $cell['labels'] ?? []
                 ];
                 $filteredData['relationships'][] = $relationship;
@@ -660,5 +855,48 @@ class PizarraController extends Controller
         }
 
         return $filteredData;
+    }
+
+
+    function obtenerNombreId($data, $id){
+         foreach ($data['cells'] as $cell) {
+            if ($cell['id'] === $id) {
+                return $cell['name'];
+            }
+        }
+        return '';
+    }
+
+    function getClasePadre($relationships){
+        $padre = null;
+        foreach ($relationships as $rel) {
+            if($rel['type'] === 'uml.Generalization'){
+                $padre = ($rel['targetName']);
+                break;
+            }            
+        }
+        return $padre;
+    }
+
+    function isClaseHerencia($class,$relationships){
+        foreach($relationships as $rel){
+            if($rel['type'] === 'uml.Generalization'){
+                if($class['id'] === $rel['target']){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function cargarListaHerencia($relationships){
+        $listHerencia = [];
+        foreach($relationships as $rel){
+            if(in_array($rel['source'],$listHerencia) && in_array($rel['target'],$listHerencia) ){
+                $listHerencia[] = $rel['source'];
+                $listHerencia[] = $rel['target'];
+            }
+        }
+        return $listHerencia;
     }
 }

@@ -42,6 +42,8 @@ Route::post('/generar-backend', [PizarraController::class, 'generarBackend']);
 Route::post('/colaboracion-add-clase', [PizarraController::class, 'colaboracionAddClase']);
 Route::post('/colaboracion-clase-movido', [PizarraController::class, 'colaboracionClaseMovido']);
 Route::post('/colaboracion-add-relacion', [PizarraController::class, 'colaboracionAddRelacion']);
+Route::post('/colaboracion-relacion-imagen', [PizarraController::class, 'colaboracionRelacionImagen']);
+
 Route::post('/colaboracion-guardar-cambios', [PizarraController::class, 'colaboracionGuardarCambios']);
 Route::post('/colaboracion-clases-borradas', [PizarraController::class, 'colaboracionClasesBorradas']);
 
