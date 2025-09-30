@@ -11,7 +11,7 @@
     <div class="container mx-auto px-4 flex justify-center">
         <div class="max-w-md w-full bg-gray-800 p-6 rounded-lg shadow-md">
             <h2 class="text-2xl font-bold mb-6 text-center">Registro</h2>
-            <form id="formulario" action="{{ route('login') }}" method="post" class="space-y-4">                
+            <form id="formulario" action="{{ route('register') }}" method="post" class="space-y-4">                
                 @csrf
                 <div>
                     <label for="name" class="block text-sm font-medium mb-1">Name</label>
